@@ -79,35 +79,35 @@ class PPOExperience():
 
 
 class PPOActor(nn.Module):
-    def __init__(self, num_actions, input_dims, lr, fc_dims=(256, 256), checkpoint_dir='checkpoints/ppo', device='cpu'):
+    def __init__(self, num_actions, input_dims, lr, checkpoint_dir='checkpoints/ppo', device='cpu'):
         super(PPOActor, self).__init__()
 
         # send to device (easier to handle at top level)
         self.device=device
         self.to(device)
 
-        # save checkpoints in case smth happens or I wanna try again with a baseline
-        self.checkpoint_file = os.path.join(checkpoint_dir, 'ppo_actor')
-
+        # dir to save checkpoints
+        self.checkpoint_dir = checkpoint_dir
 
         # ------------------------------------------------------
-        # define layers
+        # define convolution and fc layers
 
-        # action space to embedding space
-        self.fc1 = nn.Linear(*input_dims, fc_dims[0])
-        # call relu directly
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_dims[0], 32, 8, 4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, 2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, 1),
+            nn.ReLU()
+        )
 
-        # another hidden layer
-        self.fc2 = nn.Linear(*fc_dims)
-        # call relu directly
+        self.fc = nn.Sequential(
+            nn.Linear(3136, 512),
+            nn.ReLU(),
+            nn.Linear(512, num_actions)
+        )
 
-        # final output layer
-        self.out = nn.Linear(fc_dims[1], num_actions)
         self.softmax = nn.Softmax(dim=-1)
-
-        # want to sample from categorical distr based on the 
-        # above learned outputs
-        # categorical called directly
 
         # -------------------------------------------------------
 
@@ -118,26 +118,27 @@ class PPOActor(nn.Module):
 
     def forward(self, input):
 
-        # action space to embedding
-        x = nn.functional.relu(self.fc1(input))
+        num_batches = input.size(0)
 
-        # hidden layers
-        x = nn.functional.relu(self.fc2(x))
-
-        # output prob for each action
-        x = self.softmax(self.out(x))
+        # convolutions -> fc -> softmax
+        x = self.conv(input)
+        x = x.view(num_batches, -1)
+        x = self.fc(x)
+        x = self.softmax(x)
 
         # create categorical distr to sample 
         # from for our next action
         x = Categorical(x)
 
         return x
-    
-    def save_checkpoint(self):
-        torch.save(self.state_dict(), self.checkpoint_file)
 
-    def load_checkpoint(self):
-        self.load_state_dict(torch.load(self.checkpoint_file))
+    def save_checkpoint(self, fn):
+        file = os.path.join(self.checkpoint_dir, fn)
+        torch.save(self.state_dict(), file)
+
+    def load_checkpoint(self, fn):
+        file = os.path.join(self.checkpoint_dir, fn)
+        self.load_state_dict(torch.load(file), map_location=self.device)
 
 class PPOCritic(nn.Module):
     def __init__(self, input_dims, lr, fc_dims=(256, 256), checkpoint_dir='checkpoints/ppo', device='cpu'):
@@ -146,23 +147,27 @@ class PPOCritic(nn.Module):
         # send to device (easier to handle at top level)
         self.to(device)
 
-        # save checkpoints in case smth happens or I wanna try again with a baseline
-        self.checkpoint_file = os.path.join(checkpoint_dir, 'ppo_checkpoint')
+        # dir to save
+        self.checkpoint_dir = checkpoint_dir
         
 
         # ------------------------------------------------------
-        # define layers
+        # define convolution and fc layers
 
-        # action space to embedding space
-        self.fc1 = nn.Linear(*input_dims, fc_dims[0])
-        # call relu directly
+        self.conv = nn.Sequential(
+            nn.Conv2d(input_dims[0], 32, 8, 4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, 2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, 3, 1),
+            nn.ReLU()
+        )
 
-        # another hidden layer
-        self.fc2 = nn.Linear(*fc_dims)
-        # call relu directly
-
-        # final output layer
-        self.out = nn.Linear(fc_dims[1], 1)
+        self.fc = nn.Sequential(
+            nn.Linear(3136, 512),
+            nn.ReLU(),
+            nn.Linear(512, 1)
+        )
 
         # ------------------------------------------------------
 
@@ -174,23 +179,21 @@ class PPOCritic(nn.Module):
 
     def forward(self, input):
 
-        # action space to embedding
-        x = nn.functional.relu(self.fc1(input))
+        num_batches = input.size(0)
 
-        # hidden layers
-        x = nn.functional.relu(self.fc2(x))
-
-        # output approximated value function
-        # given the current policy
-        x = self.out(x)
+        x = self.conv(input)
+        x = x.view(num_batches, -1)
+        x = self.fc(x)
 
         return x
     
-    def save_checkpoint(self):
-        torch.save(self.state_dict(), self.checkpoint_file)
+    def save_checkpoint(self, fn):
+        file = os.path.join(self.checkpoint_dir, fn)
+        torch.save(self.state_dict(), file)
 
-    def load_checkpoint(self):
-        self.load_state_dict(torch.load(self.checkpoint_file))
+    def load_checkpoint(self, fn):
+        file = os.path.join(self.checkpoint_dir, fn)
+        self.load_state_dict(torch.load(file), map_location=self.device)
 
 
 class PPOAgent():
@@ -217,18 +220,18 @@ class PPOAgent():
     def clear_memory(self):
         self.memory.clear_memory()
 
-    def save_models(self, silent=False):
+    def save_models(self, actor_fn='actor_model.pt', critic_fn='critic_model.py', silent=False):
         if not silent: print('Saving models...')
-        self.actor.save_checkpoint()
-        self.critic.save_checkpoint()
+        self.actor.save_checkpoint(fn=actor_fn)
+        self.critic.save_checkpoint(fn=critic_fn)
 
-    def load_models(self, silent=False):
+    def load_models(self, actor_fn='actor_model.pt', critic_fn='critic_model.py', silent=False):
         if not silent: print('Loading models...')
-        self.actor.load_checkpoint()
-        self.critic.load_checkpoint()
+        self.actor.load_checkpoint(fn=actor_fn)
+        self.critic.load_checkpoint(fn=critic_fn)
 
     def choose_action(self, obs):
-        state = torch.tensor(np.array(obs), dtype=torch.float32).to(self.device)
+        state = torch.tensor(np.array(obs), dtype=torch.float32).to(self.device).unsqueeze(0)
 
         # get action from actor
         categorical_dist = self.actor(state)
