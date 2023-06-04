@@ -19,12 +19,12 @@ class Memory:
 
     # reset torch arrays for storing memories
     def clear_mem(self):
-        self.state_mem = torch.zeros(self.buffer_size, *self.obs_shape)
-        self.action_mem = torch.zeros(self.buffer_size, *self.act_shape)
-        self.prob_mem = torch.zeros(self.buffer_size, 1)
-        self.val_mem = torch.zeros(self.buffer_size, 1)
-        self.reward_mem = torch.zeros(self.buffer_size, 1)
-        self.done_mem = torch.zeros(self.buffer_size, 1)
+        self.state_mem = []
+        self.action_mem = []
+        self.prob_mem = []
+        self.val_mem = []
+        self.reward_mem = []
+        self.done_mem = []
 
         self.end_pointer = 0
 
@@ -32,19 +32,24 @@ class Memory:
     def cache(self, state, action, prob, val, reward, done):
 
         # save torches in memory
-        self.state_mem[self.end_pointer] = state.float()
-        self.action_mem[self.end_pointer] = action.float()
-        self.prob_mem[self.end_pointer] = prob.float()
-        self.val_mem[self.end_pointer] = val.float()
-        self.reward_mem[self.end_pointer] = reward.float()
-        self.done_mem[self.end_pointer] = done.float()
+        self.state_mem.append(state)
+        self.action_mem.append(action)
+        self.prob_mem.append(prob)
+        self.val_mem.append(val)
+        self.reward_mem.append(reward)
+        self.done_mem.append(done)
 
         # don't need to worry about % since recall and clear_mem
         # should be called as soon as tensors are full anyways
         self.end_pointer += 1
 
+    def get_data(self):
+        return np.array(self.state_mem), np.array(self.action_mem), \
+            np.array(self.prob_mem), np.array(self.val_mem), \
+            np.array(self.reward_mem), np.array(self.done_mem)
+
     # sample a batch of experiences from memory
-    def recall(self):
+    def get_batches_idxs(self):
         
         # get all possible starting indices of batch size
         # e.g. memlen 20, batch_size 5 => [0, 5, 10, 15]
@@ -57,13 +62,10 @@ class Memory:
         # collections of indices w/o repeat for each starting value
         batch_idxs = [idxs[start : start + self.batch_size] for start in batch_starts]
         
-        return self.state_mem.to(self.device), self.action_mem.to(self.device), \
-            self.prob_mem.to(self.device), self.val_mem.to(self.device), \
-            self.reward_mem.to(self.device), self.done_mem.to(self.device), \
-            batch_idxs
+        return batch_idxs
     
     def __len__(self):
-        return self.end_pointer
+        return len(self.state_mem)
 
 
 if __name__ == '__main__':

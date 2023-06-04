@@ -154,3 +154,4 @@ cython_debug/
 video.mp4
 .DS_Store
 checkpoints
+wandb

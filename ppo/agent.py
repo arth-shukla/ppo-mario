@@ -154,14 +154,16 @@ class PPOAgent():
         # only need action, logprob, value for runtime
         action, log_prob, _, value = self.conv_net.get_act_and_value(state)
 
-        return action, log_prob, value
+        return action.item(), log_prob.item(), value.item()
     
     def learn(self):
-        states, actions, log_probs, vals, rewards, dones, batch_idxs = self.mem.recall()
+        states, actions, log_probs, vals, rewards, dones = self.mem.get_data()
 
-        # we'll use GAE for advantage calc        
+        # we'll use GAE for advantage calc
         with torch.no_grad():
             advantages = torch.zeros(rewards.shape).to(self.device)
+            dones = torch.from_numpy(dones).float().to(self.device)
+            rewards = torch.from_numpy(rewards).to(self.device)
 
             last_advantage = 0
             last_value = vals[-1]
@@ -176,18 +178,18 @@ class PPOAgent():
                 last_value = vals[t]
                 last_advantage = advantages[t]
 
-            returns = advantages + vals
-
         clip_fracs = []
         for _ in (self.epochs):
+            batch_idxs = self.mem.get_batches_idxs()
             # learn from each batch
             for batch in batch_idxs:
-                b_states = states[batch]
-                b_actions = actions[batch]
-                b_log_probs = log_probs[batch]
-                b_vals = vals[batch]
-                b_returns = returns[batch]
-                b_advantages = advantages[batch]
+                b_states = torch.tensor(states[batch]).to(self.device)
+                b_actions = torch.tensor(actions[batch]).to(self.device)
+                b_log_probs = torch.tensor(log_probs[batch]).to(self.device)
+                b_vals = torch.tensor(vals[batch]).to(self.device)
+                b_advantages = torch.tensor(advantages[batch]).to(self.device)
+
+                b_returns = b_advantages + b_vals
 
                 _, new_log_probs, entropy, new_vals = self.conv_net.get_act_and_value(b_states, b_actions.long())
 
@@ -225,7 +227,7 @@ class PPOAgent():
 
                 # compute total loss
                 loss = actor_loss + self.critic_coeff * critic_loss - self.entropy_coeff * entropy_loss
-
+                
                 # backprop and descent
                 self.optimizer.zero_grad()
                 loss.backward()
