@@ -64,7 +64,7 @@ class Memory:
         return batch_idxs
     
     def __len__(self):
-        return len(self.state_mem)
+        return self.end_pointer
 
 
 if __name__ == '__main__':
