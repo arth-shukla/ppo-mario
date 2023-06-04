@@ -19,12 +19,12 @@ class Memory:
 
     # reset torch arrays for storing memories
     def clear_mem(self):
-        self.state_mem = torch.zeros(self.buffer_size, *self.obs_shape)
-        self.action_mem = torch.zeros(self.buffer_size, *self.act_shape)
-        self.prob_mem = torch.zeros(self.buffer_size, 1)
-        self.val_mem = torch.zeros(self.buffer_size, 1)
-        self.reward_mem = torch.zeros(self.buffer_size, 1)
-        self.done_mem = torch.zeros(self.buffer_size, 1)
+        self.state_mem = torch.zeros(self.buffer_size, *self.obs_shape).to(self.device)
+        self.action_mem = torch.zeros(self.buffer_size, *self.act_shape).to(self.device)
+        self.prob_mem = torch.zeros(self.buffer_size, 1).to(self.device)
+        self.val_mem = torch.zeros(self.buffer_size, 1).to(self.device)
+        self.reward_mem = torch.zeros(self.buffer_size, 1).to(self.device)
+        self.done_mem = torch.zeros(self.buffer_size, 1).to(self.device)
 
         self.end_pointer = 0
 
@@ -44,14 +44,6 @@ class Memory:
         self.end_pointer += 1
 
     def get_data(self):
-
-        # send to device
-        self.state_mem.to(self.device)
-        self.action_mem.to(self.device)
-        self.prob_mem.to(self.device)
-        self.val_mem.to(self.device)
-        self.reward_mem.to(self.device)
-        self.done_mem.to(self.device)
 
         return self.state_mem, self.action_mem, self.prob_mem, self.val_mem, self.reward_mem, self.done_mem
 
