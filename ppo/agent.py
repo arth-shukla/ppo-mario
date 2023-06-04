@@ -94,7 +94,7 @@ class PPOAgent():
         embed = 512,
     ):
         # get device
-        self.device = torch.device('cpu' if torch.cuda.is_available else 'cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
 
         # init agent memory
         self.buffer_size = buffer_size
@@ -103,7 +103,7 @@ class PPOAgent():
         self.mem = Memory(self.buffer_size, self.batch_size, obs_shape, act_shape)
 
         # init agents
-        self.conv_net = PPOAgentNets(obs_shape, act_n, embed=embed)
+        self.conv_net = PPOAgentNets(obs_shape, act_n, embed=embed).to(self.device)
 
         # init optimizer and optionally scheduler for descent
         self.scheduler_gamma = scheduler_gamma
@@ -159,9 +159,9 @@ class PPOAgent():
     def learn(self):
         states, actions, log_probs, vals, rewards, dones, batch_idxs = self.mem.recall()
 
-        # we'll use GAE for advantage calc
+        # we'll use GAE for advantage calc        
         with torch.no_grad():
-            advantages = torch.zeros_like(rewards).to(self.device)
+            advantages = torch.zeros(rewards.shape).to(self.device)
 
             last_advantage = 0
             last_value = vals[-1]
