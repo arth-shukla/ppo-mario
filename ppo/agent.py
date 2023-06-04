@@ -289,11 +289,11 @@ class PPOAgent():
                 if approx_kl > self.early_stop_kl:
                     break
 
-            # explained variance measures how well the value func matches the returns
-            # should be as close to 1 as possible
-            y_pred, y_true = b_vals.cpu().numpy(), b_returns.cpu().numpy()
-            var_y = np.var(y_true)
-            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+        # explained variance measures how well the value func matches the returns
+        # should be as close to 1 as possible
+        y_pred, y_true = b_vals.cpu().numpy(), b_returns.cpu().numpy()
+        var_y = np.var(y_true)
+        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # return early stop condition and log metrics
         return {
