@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 
 from .memory import Memory
@@ -10,54 +11,59 @@ class PPOAgentNets(nn.Module):
     def __init__(self, obs_shape, act_n, embed=512):
         super(PPOAgentNets, self).__init__()
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(obs_shape[0], 32, 8, 4),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 4, 2),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, 1),
-            nn.ReLU(),
-            nn.Flatten(),
-        )
+        self.conv1 = nn.Conv2d(obs_shape[0], 32, 3, stride=2, padding=1)
+        self.conv2 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
+        self.conv4 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
 
-        self.conv_out = self._get_conv_out(obs_shape)
+        self.linear = nn.Linear(self._get_conv_out(obs_shape), embed)
+        
+        self.actor = nn.Linear(embed, act_n)
+        self.softmax = nn.Softmax(dim=-1)
 
-        self.actor = nn.Sequential(
-            self._layer_init(nn.Linear(self.conv_out, embed)),
-            nn.ReLU(),
-            self._layer_init(nn.Linear(embed, act_n), std=0.01)
-        )
+        self.critic = nn.Linear(embed, 1)
 
-        self.critic = nn.Sequential(
-            self._layer_init(nn.Linear(self.conv_out, embed)),
-            nn.ReLU(),
-            self._layer_init(nn.Linear(embed, 1), std=1.0)
-        )
+        self._initialize_weights()
 
+    def _initialize_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, nn.init.calculate_gain('relu'))
+                # nn.init.xavier_uniform_(module.weight)
+                # nn.init.kaiming_uniform_(module.weight)
+                nn.init.constant_(module.bias, 0)
+
+    def _convolutions(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        return F.relu(self.conv4(x))
+    
     def _get_conv_out(self, obs_shape):
-        return int(np.prod(self.conv(torch.zeros(1, *obs_shape)).size()))
 
-    def _layer_init(self, layer, std=np.sqrt(2), bias_const=0.0):
-        torch.nn.init.orthogonal_(layer.weight, std)
-        torch.nn.init.constant_(layer.bias, bias_const)
-        return layer
+        x = torch.zeros(1, *obs_shape)
+        x = self._convolutions(x)
+
+        return int(np.prod(x.shape))
     
     def get_value(self, x):
         num_batches = x.size(0)
 
-        x = self.conv(x)
+        x = self._convolutions(x)
         x = x.view(num_batches, -1)
+        x = self.linear(x)
 
         return self.critic(x)
-
+    
     def get_act_and_value(self, x, action=None):
         num_batches = x.size(0)
 
-        x = self.conv(x)
+        x = self._convolutions(x)
         x = x.view(num_batches, -1)
+        x = self.linear(x)
 
-        logits = self.actor(x)
-        probs = Categorical(logits=logits)
+        logits = self.softmax(self.actor(x))
+        probs = Categorical(logits)
 
         if action == None:
             action = probs.sample()
@@ -94,7 +100,7 @@ class PPOAgent():
         embed = 512,
     ):
         # get device
-        self.device = torch.device('cuda' if torch.cuda.is_available else 'cpu')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # init agent memory
         self.buffer_size = buffer_size
@@ -154,19 +160,17 @@ class PPOAgent():
         # only need action, logprob, value for runtime
         action, log_prob, _, value = self.conv_net.get_act_and_value(state)
 
-        return action.item(), log_prob.item(), value.item()
+        return action, log_prob, value
     
-    def learn(self):
+    def learn(self, next_obs):
         states, actions, log_probs, vals, rewards, dones = self.mem.get_data()
 
         # we'll use GAE for advantage calc
         with torch.no_grad():
             advantages = torch.zeros(rewards.shape).to(self.device)
-            dones = torch.from_numpy(dones).float().to(self.device)
-            rewards = torch.from_numpy(rewards).to(self.device)
 
             last_advantage = 0
-            last_value = vals[-1]
+            last_value = self.conv_net.get_value(next_obs.unsqueeze(0))
             for t in reversed(range(self.buffer_size)):
                 mask = 1.0 - dones[t]
                 last_value = last_value * mask
@@ -178,17 +182,19 @@ class PPOAgent():
                 last_value = vals[t]
                 last_advantage = advantages[t]
 
+        # We can now begin experience replay
         clip_fracs = []
         for _ in (self.epochs):
             batch_idxs = self.mem.get_batches_idxs()
             # learn from each batch
             for batch in batch_idxs:
+
+                # new tensors for each batch
                 b_states = torch.tensor(states[batch]).to(self.device)
                 b_actions = torch.tensor(actions[batch]).to(self.device)
                 b_log_probs = torch.tensor(log_probs[batch]).to(self.device)
                 b_vals = torch.tensor(vals[batch]).to(self.device)
                 b_advantages = torch.tensor(advantages[batch]).to(self.device)
-
                 b_returns = b_advantages + b_vals
 
                 _, new_log_probs, entropy, new_vals = self.conv_net.get_act_and_value(b_states, b_actions.long())
@@ -211,22 +217,22 @@ class PPOAgent():
 
                 
                 # (p_theta / p_theta_old) * A_t
-                weighted_probs = -1 *prob_ratio * b_advantages
+                weighted_probs = -b_advantages * prob_ratio
                 # clip per paper to avoid too big a change in underlying params
-                weighted_clipped_probs = -1 * torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * b_advantages
+                weighted_clipped_probs = -b_advantages * torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip)
 
                 # actor loss (recall loss performed using gradient ascent)
                 actor_loss = torch.max(weighted_probs, weighted_clipped_probs).mean()
 
                 # critic loss = mse(return - network_critic_val)
                 critic_loss = (b_returns - torch.squeeze(new_vals)) ** 2
-                critic_loss = critic_loss.mean()
+                critic_loss = 0.5 * critic_loss.mean()
 
                 # entropy to encourage exploration
                 entropy_loss = entropy.mean()
 
                 # compute total loss
-                loss = actor_loss + self.critic_coeff * critic_loss - self.entropy_coeff * entropy_loss
+                loss = (actor_loss) + (self.critic_coeff * critic_loss) - (self.entropy_coeff * entropy_loss)
 
                 # backprop and descent
                 self.optimizer.zero_grad()
@@ -237,6 +243,10 @@ class PPOAgent():
                 if self.scheduler_gamma != None:
                     self.scheduler.step()
 
+            if self.early_stop_kl != None:
+                if approx_kl > self.early_stop_kl:
+                    break
+
             # explained variance measures how well the value func matches the returns
             # should be as close to 1 as possible
             y_pred, y_true = b_vals.cpu().numpy(), b_returns.cpu().numpy()
@@ -244,14 +254,13 @@ class PPOAgent():
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         # return early stop condition and log metrics
-        return (self.early_stop_kl != None) and (approx_kl > self.early_stop_kl), \
-            {
-                'train/lr': self.optimizer.param_groups[0]['lr'],
-                'losses/old_approx_kl': old_approx_kl.item(),
-                'losses/approx_kl': approx_kl.item(),
-                'losses/clip_fracs': np.mean(clip_fracs),
-                'losses/critic_loss': critic_loss.item(),
-                'losses/actor_loss': actor_loss.item(),
-                'losses/entropy_loss': entropy_loss.item(),
-                'losses/explained_variance': explained_var,
-            }
+        return {
+            'train/lr': self.optimizer.param_groups[0]['lr'],
+            'losses/old_approx_kl': old_approx_kl.item(),
+            'losses/approx_kl': approx_kl.item(),
+            'losses/clip_fracs': np.mean(clip_fracs),
+            'losses/critic_loss': critic_loss.item(),
+            'losses/actor_loss': actor_loss.item(),
+            'losses/entropy_loss': entropy_loss.item(),
+            'losses/explained_variance': explained_var,
+        }
