@@ -201,7 +201,7 @@ class PPOAgent():
                     # 1. monitor policy i.e. spikes in kl div might show policy is worsening
                     # 2. early end if approx kl gets bigger than target_kl
                     old_approx_kl = (-log_prob_ratio).mean()
-                    approx_kl = ((prob_ratio - 1) - prob_ratio).mean()
+                    approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
                     clip_fracs += [((prob_ratio - 1.0).abs() > self.policy_clip).float().mean().item()]
 
                 # note sometimes advantage normalizaiton can lead to empirical benefits
@@ -211,12 +211,12 @@ class PPOAgent():
 
                 
                 # (p_theta / p_theta_old) * A_t
-                weighted_probs = prob_ratio * b_advantages
+                weighted_probs = -1 *prob_ratio * b_advantages
                 # clip per paper to avoid too big a change in underlying params
-                weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * b_advantages
+                weighted_clipped_probs = -1 * torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * b_advantages
 
                 # actor loss (recall loss performed using gradient ascent)
-                actor_loss = -1 * torch.min(weighted_probs, weighted_clipped_probs).mean()
+                actor_loss = torch.max(weighted_probs, weighted_clipped_probs).mean()
 
                 # critic loss = mse(return - network_critic_val)
                 critic_loss = (b_returns - torch.squeeze(new_vals)) ** 2
@@ -227,7 +227,7 @@ class PPOAgent():
 
                 # compute total loss
                 loss = actor_loss + self.critic_coeff * critic_loss - self.entropy_coeff * entropy_loss
-                
+
                 # backprop and descent
                 self.optimizer.zero_grad()
                 loss.backward()
