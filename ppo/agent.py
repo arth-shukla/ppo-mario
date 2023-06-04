@@ -17,6 +17,7 @@ class PPOAgentNets(nn.Module):
         self.conv4 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
 
         self.linear = nn.Linear(self._get_conv_out(obs_shape), embed)
+        self.linear2 = nn.Linear(embed, embed)
         
         self.actor = nn.Linear(embed, act_n)
         self.softmax = nn.Softmax(dim=-1)
@@ -39,6 +40,10 @@ class PPOAgentNets(nn.Module):
         x = F.relu(self.conv3(x))
         return F.relu(self.conv4(x))
     
+    def _linears(self, x):
+        x = F.relu(self.linear(x))
+        return F.relu(self.linear2(x))
+    
     def _get_conv_out(self, obs_shape):
 
         x = torch.zeros(1, *obs_shape)
@@ -51,7 +56,7 @@ class PPOAgentNets(nn.Module):
 
         x = self._convolutions(x)
         x = x.view(num_batches, -1)
-        x = self.linear(x)
+        x = self._linears(x)
 
         return self.critic(x)
     
@@ -60,7 +65,7 @@ class PPOAgentNets(nn.Module):
 
         x = self._convolutions(x)
         x = x.view(num_batches, -1)
-        x = self.linear(x)
+        x = self._linears(x)
 
         logits = self.softmax(self.actor(x))
         probs = Categorical(logits)
@@ -166,11 +171,11 @@ class PPOAgent():
         states, actions, log_probs, vals, rewards, dones = self.mem.get_data()
 
         # we'll use GAE for advantage calc
-        advantage = None
-        returns = torch.zeros(rewards.shape).to(self.device)
+        advantages = torch.zeros(rewards.shape).to(self.device)
+        # returns = torch.zeros(rewards.shape).to(self.device)
         with torch.no_grad():
             last_value = self.conv_net.get_value(next_obs.unsqueeze(0))
-            if False:
+            if True:
                 last_advantage = 0
                 for t in reversed(range(self.buffer_size)):
                     mask = 1.0 - dones[t]
@@ -182,7 +187,7 @@ class PPOAgent():
                 
                     last_value = vals[t]
                     last_advantage = advantages[t]
-            elif True:
+            elif False:
                 last_return = last_value
                 for t in reversed(range(self.buffer_size)):
                     mask = 1.0 - dones[t]
@@ -191,10 +196,10 @@ class PPOAgent():
 
                     last_return = returns[t]
             else:
-                advantage = np.zeros(len(rewards), dtype=np.float32)
-                rewards_mem = rewards.numpy()
-                vals_mem = vals.numpy()
-                dones_mem = dones.numpy()
+                advantages = np.zeros(len(rewards), dtype=np.float32)
+                rewards_mem = rewards.cpu().numpy()
+                vals_mem = vals.cpu().numpy()
+                dones_mem = dones.cpu().numpy()
                 # calc A_t
                 for t in range(len(rewards)-1):
 
@@ -214,8 +219,8 @@ class PPOAgent():
                         discount *= self.discount * self.gae_lambda
 
                     # set adv
-                    advantage[t] = A_t
-                advantage = torch.from_numpy(advantage).to(self.device)
+                    advantages[t] = A_t
+                advantages = torch.from_numpy(advantages).to(self.device)
 
         # We can now begin experience replay
         clip_fracs = []
@@ -229,10 +234,10 @@ class PPOAgent():
                 b_actions = torch.tensor(actions[batch]).to(self.device)
                 b_log_probs = torch.tensor(log_probs[batch]).to(self.device)
                 b_vals = torch.tensor(vals[batch]).to(self.device)
-                # b_advantages = torch.tensor(advantages[batch]).to(self.device)
-                # b_returns = b_advantages + b_vals
-                b_returns = torch.tensor(returns[batch]).to(self.device)
-                b_advantages = b_returns - b_vals
+                b_advantages = torch.tensor(advantages[batch]).to(self.device)
+                b_returns = b_advantages + b_vals
+                # b_returns = torch.tensor(returns[batch]).to(self.device)
+                # b_advantages = b_returns - b_vals
 
                 _, new_log_probs, entropy, new_vals = self.conv_net.get_act_and_value(b_states, b_actions.long())
 
