@@ -166,21 +166,56 @@ class PPOAgent():
         states, actions, log_probs, vals, rewards, dones = self.mem.get_data()
 
         # we'll use GAE for advantage calc
+        advantage = None
+        returns = torch.zeros(rewards.shape).to(self.device)
         with torch.no_grad():
-            advantages = torch.zeros(rewards.shape).to(self.device)
-
-            last_advantage = 0
             last_value = self.conv_net.get_value(next_obs.unsqueeze(0))
-            for t in reversed(range(self.buffer_size)):
-                mask = 1.0 - dones[t]
-                last_value = last_value * mask
-                last_advantage = last_advantage * mask
+            if False:
+                last_advantage = 0
+                for t in reversed(range(self.buffer_size)):
+                    mask = 1.0 - dones[t]
+                    last_value = last_value * mask
+                    last_advantage = last_advantage * mask
 
-                delta = rewards[t] + self.discount * last_value - vals[t]
-                advantages[t] = delta + self.discount * self.gae_lambda * last_advantage
-            
-                last_value = vals[t]
-                last_advantage = advantages[t]
+                    delta = rewards[t] + self.discount * last_value - vals[t]
+                    advantages[t] = delta + self.discount * self.gae_lambda * last_advantage
+                
+                    last_value = vals[t]
+                    last_advantage = advantages[t]
+            elif True:
+                last_return = last_value
+                for t in reversed(range(self.buffer_size)):
+                    mask = 1.0 - dones[t]
+
+                    returns[t] = rewards[t] + self.discount * mask * last_return
+
+                    last_return = returns[t]
+            else:
+                advantage = np.zeros(len(rewards), dtype=np.float32)
+                rewards_mem = rewards.numpy()
+                vals_mem = vals.numpy()
+                dones_mem = dones.numpy()
+                # calc A_t
+                for t in range(len(rewards)-1):
+
+                    discount = 1    # (gamma * delta) ^ 0
+                    A_t = 0
+
+                    # calc each A_k term
+                    for k in range(t, len(rewards)-1):
+
+                        # delta_k = r_k + gamma * V(s_k+1) - V(s_k)
+                        delta_k = rewards_mem[k] + self.discount * vals_mem[k + 1] * (1 - int(dones_mem[k])) - vals_mem[k]
+                        
+                        # add to A_t
+                        A_t += discount * delta_k
+
+                        # discount decreases
+                        discount *= self.discount * self.gae_lambda
+
+                    # set adv
+                    advantage[t] = A_t
+                advantage = torch.from_numpy(advantage).to(self.device)
 
         # We can now begin experience replay
         clip_fracs = []
@@ -194,8 +229,10 @@ class PPOAgent():
                 b_actions = torch.tensor(actions[batch]).to(self.device)
                 b_log_probs = torch.tensor(log_probs[batch]).to(self.device)
                 b_vals = torch.tensor(vals[batch]).to(self.device)
-                b_advantages = torch.tensor(advantages[batch]).to(self.device)
-                b_returns = b_advantages + b_vals
+                # b_advantages = torch.tensor(advantages[batch]).to(self.device)
+                # b_returns = b_advantages + b_vals
+                b_returns = torch.tensor(returns[batch]).to(self.device)
+                b_advantages = b_returns - b_vals
 
                 _, new_log_probs, entropy, new_vals = self.conv_net.get_act_and_value(b_states, b_actions.long())
 
