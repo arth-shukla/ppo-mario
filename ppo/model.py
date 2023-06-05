@@ -11,7 +11,6 @@ class PPOActor(nn.Module):
 
         # get device and send to it
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.to(self.device)
 
         # ------------------------------------------------------
         # define layers
@@ -60,7 +59,6 @@ class PPOCritic(nn.Module):
 
         # get device and send to it
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.to(self.device)
 
         # ------------------------------------------------------
         # define layers

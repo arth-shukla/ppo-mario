@@ -52,8 +52,8 @@ class PPOAgent():
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # create actor, critic, and memory
-        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma)
-        self.critic = PPOCritic(obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma)
+        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma).to(self.device)
+        self.critic = PPOCritic(obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma).to(self.device)
         self.memory = PPOExperience(batch_size, buffer_size=buffer_size)
 
 
