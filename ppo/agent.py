@@ -74,25 +74,28 @@ class PPOAgent():
 
         return action, prob, val
     
+    approx_kl = None
+    entropy_loss = None
     def learn(self, next_state):
+        next_state = torch.tensor(next_state).unsqueeze(0).to(self.device)
+        next_state_val = self.critic(next_state)
         for _ in range(self.epochs):
             state_mem, action_mem, probs_mem, vals_mem, rewards_mem, dones_mem, batch_idxs = self.memory.gen_batches()
 
             advantage = np.zeros(len(rewards_mem), dtype=np.float32)
             # calc A_t
-            for t in range(len(rewards_mem)-1):
+            for t in range(len(rewards_mem)):
 
                 discount = 1    # (discount * delta) ^ 0
                 A_t = 0
 
                 # calc each A_k term
-                for k in range(t, len(rewards_mem)-1):
+                for k in range(t, len(rewards_mem)):
 
-                    next_val = vals_mem[k + 1]
-                    # if k == rewards_mem - 1:
-                    #     next_val = self.critic(next_state)
-                    # else:
-                    #     next_val = vals_mem[k + 1]
+                    if k == len(rewards_mem) - 1:
+                        next_val = next_state_val
+                    else:
+                        next_val = vals_mem[k + 1]
 
                     # delta_k = r_k + discount * V(s_k+1) - V(s_k)
                     delta_k = rewards_mem[k] + self.discount * next_val * (1 - int(dones_mem[k])) - vals_mem[k]
@@ -122,12 +125,27 @@ class PPOAgent():
                 categorical_dist = self.actor(states)
                 critic_val = torch.squeeze(self.critic(states))
 
-                # get probs from vategorical distribution
+                # get probs from categorical distribution
                 new_probs = categorical_dist.log_prob(actions)
 
+                # note sometimes advantage normalizaiton can lead to empirical benefits
+                # in training but it seems it can be harmful sometimes
+                if self.norm_advantage:
+                    b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
+
                 # (p_theta / p_theta_old) * A_t
-                prob_ratio = (new_probs - old_probs).exp()
+                log_prob_ratio = new_probs - old_probs
+                prob_ratio = log_prob_ratio.exp()
                 weighted_probs = advantage[batch] * prob_ratio
+
+
+                # using approx kl from http://joschu.net/blog/kl-approx.html to
+                # 1. monitor policy i.e. spikes in kl div might show policy is worsening
+                # 2. early end if approx kl gets bigger than target_kl
+                if self.early_stop_kl != None:
+                    with torch.no_grad():
+                        approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
+
 
                 # clip per paper to avoid too big a change in underlying params
                 weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
@@ -144,7 +162,16 @@ class PPOAgent():
                 # note total loss is + 0.5 since we need gradient ascent
                 # also, since we're using two separate networks for
                 # critic and loss, we don't need the entropy term
-                total_loss = actor_loss + 0.5 * critic_loss
+                total_loss = actor_loss + self.critic_coeff * critic_loss
+
+
+                # entropy can help force the model to explore more, which can help prevent the 
+                # agent from converging to an unhelpful solution by encouraging exploration
+                if self.entropy_coeff != None:
+                    entropy = new_probs.entropy()
+                    entropy_loss = entropy.mean()
+                    total_loss -= self.entropy_coeff * entropy_loss
+
 
                 # zero out grads
                 self.actor.optimizer.zero_grad()
@@ -153,9 +180,30 @@ class PPOAgent():
                 # backprop
                 total_loss.backward()
 
+                # grad norm clip can help reduce model perturbations and avoid
+                # harmful shifts in the policy space, but if too aggressive can
+                # also harm learning or require smaller learning rates
+                if self.max_grad_norm != None:
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+
                 # descent steps on each network
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
+
+        log_dict = {
+            'losses/actor_loss': actor_loss.item(),
+            'losses/critic_loss': critic_loss.item(),
+        }
+        if self.scheduler_gamma:
+            log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_lr()
+            log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_lr()
+        if self.early_stop_kl:
+            log_dict['losses/approx_kl'] = approx_kl.item()
+        if self.entropy_coeff != None:
+            log_dict['losses/entropy'] = entropy_loss.item()
+
+        return log_dict
 
 
     # ------------------------------------------------------------------------------------------
