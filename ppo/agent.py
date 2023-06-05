@@ -141,9 +141,8 @@ class PPOAgent():
                 # using approx kl from http://joschu.net/blog/kl-approx.html to
                 # 1. monitor policy i.e. spikes in kl div might show policy is worsening
                 # 2. early end if approx kl gets bigger than target_kl
-                if self.early_stop_kl != None:
-                    with torch.no_grad():
-                        approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
+                with torch.no_grad():
+                    approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
 
 
                 # clip per paper to avoid too big a change in underlying params
@@ -166,9 +165,9 @@ class PPOAgent():
 
                 # entropy can help force the model to explore more, which can help prevent the 
                 # agent from converging to an unhelpful solution by encouraging exploration
+                entropy = categorical_dist.entropy()
+                entropy_loss = entropy.mean()
                 if self.entropy_coeff != None:
-                    entropy = categorical_dist.entropy()
-                    entropy_loss = entropy.mean()
                     total_loss -= self.entropy_coeff * entropy_loss
 
 
@@ -197,15 +196,13 @@ class PPOAgent():
         log_dict = {
             'losses/actor_loss': actor_loss.item(),
             'losses/critic_loss': critic_loss.item(),
+            'losses/approx_kl': approx_kl.item(),
+            'losses/entropy': entropy_loss.item(),
         }
         if self.scheduler_gamma:
             print(self.actor.scheduler.get_last_lr())
             log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_last_lr()[0]
             log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_last_lr()[0]
-        if self.early_stop_kl:
-            log_dict['losses/approx_kl'] = approx_kl.item()
-        if self.entropy_coeff != None:
-            log_dict['losses/entropy'] = entropy_loss.item()
 
         return log_dict
 
