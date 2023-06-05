@@ -113,6 +113,10 @@ class PPOAgent():
             advantage = torch.tensor(advantage).to(self.device)
             vals = torch.tensor(vals_mem).to(self.device)
 
+            # note sometimes advantage normalizaiton can lead to empirical benefits
+            # in training but it seems it can be harmful sometimes
+            if self.norm_advantage:
+                advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
             for batch in batch_idxs:
 
@@ -127,11 +131,6 @@ class PPOAgent():
 
                 # get probs from categorical distribution
                 new_probs = categorical_dist.log_prob(actions)
-
-                # note sometimes advantage normalizaiton can lead to empirical benefits
-                # in training but it seems it can be harmful sometimes
-                if self.norm_advantage:
-                    b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
 
                 # (p_theta / p_theta_old) * A_t
                 log_prob_ratio = new_probs - old_probs
@@ -168,7 +167,7 @@ class PPOAgent():
                 # entropy can help force the model to explore more, which can help prevent the 
                 # agent from converging to an unhelpful solution by encouraging exploration
                 if self.entropy_coeff != None:
-                    entropy = new_probs.entropy()
+                    entropy = categorical_dist.entropy()
                     entropy_loss = entropy.mean()
                     total_loss -= self.entropy_coeff * entropy_loss
 
@@ -190,14 +189,19 @@ class PPOAgent():
                 # descent steps on each network
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
+            
+            if self.scheduler_gamma != None:
+                self.actor.scheduler.step()
+                self.critic.scheduler.step()
 
         log_dict = {
             'losses/actor_loss': actor_loss.item(),
             'losses/critic_loss': critic_loss.item(),
         }
         if self.scheduler_gamma:
-            log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_lr()
-            log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_lr()
+            print(self.actor.scheduler.get_last_lr())
+            log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_last_lr()[0]
+            log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_last_lr()[0]
         if self.early_stop_kl:
             log_dict['losses/approx_kl'] = approx_kl.item()
         if self.entropy_coeff != None:

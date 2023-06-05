@@ -36,7 +36,7 @@ class PPOActor(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
         # optionally make scheduler
-        if scheduler_gamma:
+        if scheduler_gamma != None:
             self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, scheduler_gamma)
 
     def _get_conv_out(self, obs_shape):
@@ -83,7 +83,7 @@ class PPOCritic(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
         # optionally make scheduler
-        if scheduler_gamma:
+        if scheduler_gamma != None:
             self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer, scheduler_gamma)
 
     def _get_conv_out(self, obs_shape):
