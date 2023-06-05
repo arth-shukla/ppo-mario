@@ -1,308 +1,197 @@
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.distributions.categorical import Categorical
+import numpy as np
 
-from .memory import Memory
+from .memory import PPOExperience
+from .model import PPOActor, PPOCritic
 
-
-class PPOAgentNets(nn.Module):
-    def __init__(self, obs_shape, act_n, embed=512):
-        super(PPOAgentNets, self).__init__()
-
-        self.conv1 = nn.Conv2d(obs_shape[0], 32, 3, stride=2, padding=1)
-        self.conv2 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-        self.conv3 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-        self.conv4 = nn.Conv2d(32, 32, 3, stride=2, padding=1)
-
-        self.linear = nn.Linear(self._get_conv_out(obs_shape), embed)
-        self.linear2 = nn.Linear(embed, embed)
-        
-        self.actor = nn.Linear(embed, act_n)
-        self.softmax = nn.Softmax(dim=-1)
-
-        self.critic = nn.Linear(embed, 1)
-
-        self._initialize_weights()
-
-    def _initialize_weights(self):
-        for module in self.modules():
-            if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
-                nn.init.orthogonal_(module.weight, nn.init.calculate_gain('relu'))
-                # nn.init.xavier_uniform_(module.weight)
-                # nn.init.kaiming_uniform_(module.weight)
-                nn.init.constant_(module.bias, 0)
-
-    def _convolutions(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        return F.relu(self.conv4(x))
-    
-    def _linears(self, x):
-        x = F.relu(self.linear(x))
-        return F.relu(self.linear2(x))
-    
-    def _get_conv_out(self, obs_shape):
-
-        x = torch.zeros(1, *obs_shape)
-        x = self._convolutions(x)
-
-        return int(np.prod(x.shape))
-    
-    def get_value(self, x):
-        num_batches = x.size(0)
-
-        x = self._convolutions(x)
-        x = x.view(num_batches, -1)
-        x = self._linears(x)
-
-        return self.critic(x)
-    
-    def get_act_and_value(self, x, action=None):
-        num_batches = x.size(0)
-
-        x = self._convolutions(x)
-        x = x.view(num_batches, -1)
-        x = self._linears(x)
-
-        logits = self.softmax(self.actor(x))
-        probs = Categorical(logits)
-
-        if action == None:
-            action = probs.sample()
-
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
-    
 class PPOAgent():
     # defaults to 'ideal' values from https://arxiv.org/pdf/1707.06347.pdf
     def __init__(
-        self,
+            self,
+            # model architecture
+            obs_shape, act_shape, act_n, embed=512,
+            # memory info
+            buffer_size=2048, batch_size=64, epochs=10,
+            # advantage calc
+            discount=0.99, gae_lambda=0.95, policy_clip=0.2, norm_advantage=False,
+            # loss calc
+            entropy_coeff=0.01, critic_coeff=0.5, max_grad_norm=0.5, early_stop_kl=None,
+            # optimizer params
+            lr=2.5e-4, scheduler_gamma=None,
 
-        obs_shape,
-        act_shape,
-        act_n,
+        ):
+        
+        # model architecture
+        self.obs_shape = obs_shape
+        self.act_shape = act_shape
+        self.act_n = act_n
+        self.embed = embed
 
-        buffer_size = 2048,
-        batch_size = 64,
-        epochs = 4,
-
-        lr = 2.5e-4,
-        scheduler_gamma = None,
-
-        discount = .99,
-        gae_lambda = 0.95,
-        policy_clip = 0.2,
-        norm_advantage = False,
-
-        entropy_coeff = 0.01,
-        critic_coeff = 0.5,
-        max_grad_norm = 0.5,
-
-        early_stop_kl = None,
-
-        embed = 512,
-    ):
-        # get device
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-        # init agent memory
+        # memory info
         self.buffer_size = buffer_size
         self.batch_size = batch_size
-        self.epochs = epochs,
-        self.mem = Memory(self.buffer_size, self.batch_size, obs_shape, act_shape)
+        self.epochs = epochs
 
-        # init agents
-        self.conv_net = PPOAgentNets(obs_shape, act_n, embed=embed).to(self.device)
-
-        # init optimizer and optionally scheduler for descent
-        self.scheduler_gamma = scheduler_gamma
-        self.optimizer = torch.optim.Adam(self.conv_net.parameters(), lr=lr, eps=1e-5)
-        if self.scheduler_gamma != None:
-            self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.scheduler_gamma)
-        
-        # advantage calc hyperparams
+        # advantage calc
         self.discount = discount
         self.gae_lambda = gae_lambda
         self.policy_clip = policy_clip
         self.norm_advantage = norm_advantage
 
-        # loss calc hyperparams
+        # loss calc
         self.entropy_coeff = entropy_coeff
         self.critic_coeff = critic_coeff
         self.max_grad_norm = max_grad_norm
-
-        # kl div spikes can indicate a bad policy, so early 
-        # stop can be beneficial to learning
         self.early_stop_kl = early_stop_kl
 
-    def cache(self, state, action, log_prob, vals, reward, done):
-        self.mem.cache(state, action, log_prob, vals, reward, done)
+        # optimizer params
+        self.lr = lr
+        self.scheduler_gamma = scheduler_gamma
 
-    def mem_full(self):
-        return len(self.mem) == self.buffer_size
+        # get device
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    def clear_mem(self):
-        self.mem.clear_mem()
+        # create actor, critic, and memory
+        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma)
+        self.critic = PPOCritic(obs_shape, embed=embed, scheduler_gamma=scheduler_gamma)
+        self.memory = PPOExperience(batch_size, embed=embed, buffer_size=buffer_size)
 
-    def save(self, path='model.pt'):
-        torch.save({
-            'model': self.conv_net.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-        }, path)
-
-    def load(self, path='model.pt'):
-        checkpoint = torch.load(path, map_location=self.device)
-
-        self.conv_net.load_state_dict(checkpoint['model'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
 
     def act(self, obs):
-        # convert state to N C W H tensor
-        state = torch.tensor(np.array(obs), dtype=torch.float32).to(self.device).unsqueeze(0)
+        state = torch.tensor(np.array(obs), dtype=torch.float32).to(self.device)
 
-        # only need action, logprob, value for runtime
-        action, log_prob, _, value = self.conv_net.get_act_and_value(state)
+        # get action from actor
+        categorical_dist = self.actor(state)
+        action = categorical_dist.sample()
+        
+        # get approx value from critic
+        val = self.critic(state)
 
-        return action, log_prob, value
+        # get probability of action based on policy, action, and val
+        action = torch.squeeze(action).item()
+        prob = torch.squeeze(categorical_dist.log_prob(action)).item()
+        val = torch.squeeze(val).item()
+
+        return action, prob, val
     
-    def learn(self, next_obs):
-        states, actions, log_probs, vals, rewards, dones = self.mem.get_data()
+    def learn(self):
+        for _ in range(self.epochs):
+            state_mem, action_mem, probs_mem, vals_mem, rewards_mem, dones_mem, batch_idxs = self.memory.gen_batches()
 
-        # we'll use GAE for advantage calc
-        advantages = torch.zeros(rewards.shape).to(self.device)
-        # returns = torch.zeros(rewards.shape).to(self.device)
-        with torch.no_grad():
-            last_value = self.conv_net.get_value(next_obs.unsqueeze(0))
-            if True:
-                last_advantage = 0
-                for t in reversed(range(self.buffer_size)):
-                    mask = 1.0 - dones[t]
-                    last_value = last_value * mask
-                    last_advantage = last_advantage * mask
+            advantage = np.zeros(len(rewards_mem), dtype=np.float32)
+            # calc A_t
+            for t in range(len(rewards_mem)-1):
 
-                    delta = rewards[t] + self.discount * last_value - vals[t]
-                    advantages[t] = delta + self.discount * self.gae_lambda * last_advantage
-                
-                    last_value = vals[t]
-                    last_advantage = advantages[t]
-            elif False:
-                last_return = last_value
-                for t in reversed(range(self.buffer_size)):
-                    mask = 1.0 - dones[t]
+                discount = 1    # (discount * delta) ^ 0
+                A_t = 0
 
-                    returns[t] = rewards[t] + self.discount * mask * last_return
+                # calc each A_k term
+                for k in range(t, len(rewards_mem)-1):
 
-                    last_return = returns[t]
-            else:
-                advantages = np.zeros(len(rewards), dtype=np.float32)
-                rewards_mem = rewards.cpu().numpy()
-                vals_mem = vals.cpu().numpy()
-                dones_mem = dones.cpu().numpy()
-                # calc A_t
-                for t in range(len(rewards)-1):
+                    # delta_k = r_k + discount * V(s_k+1) - V(s_k)
+                    delta_k = rewards_mem[k] + self.discount * vals_mem[k + 1] * (1 - int(dones_mem[k])) - vals_mem[k]
+                    
+                    # add to A_t
+                    A_t += discount * delta_k
 
-                    discount = 1    # (gamma * delta) ^ 0
-                    A_t = 0
+                    # discount decreases
+                    discount *= self.discount * self.gae_lambda
 
-                    # calc each A_k term
-                    for k in range(t, len(rewards)-1):
+                # set adv
+                advantage[t] = A_t
 
-                        # delta_k = r_k + gamma * V(s_k+1) - V(s_k)
-                        delta_k = rewards_mem[k] + self.discount * vals_mem[k + 1] * (1 - int(dones_mem[k])) - vals_mem[k]
-                        
-                        # add to A_t
-                        A_t += discount * delta_k
+            # convert to tensors for processing
+            advantage = torch.tensor(advantage).to(self.device)
+            vals = torch.tensor(vals_mem).to(self.device)
 
-                        # discount decreases
-                        discount *= self.discount * self.gae_lambda
 
-                    # set adv
-                    advantages[t] = A_t
-                advantages = torch.from_numpy(advantages).to(self.device)
-
-        # We can now begin experience replay
-        clip_fracs = []
-        for _ in (self.epochs):
-            batch_idxs = self.mem.get_batches_idxs()
-            # learn from each batch
             for batch in batch_idxs:
 
-                # new tensors for each batch
-                b_states = torch.tensor(states[batch]).to(self.device)
-                b_actions = torch.tensor(actions[batch]).to(self.device)
-                b_log_probs = torch.tensor(log_probs[batch]).to(self.device)
-                b_vals = torch.tensor(vals[batch]).to(self.device)
-                b_advantages = torch.tensor(advantages[batch]).to(self.device)
-                b_returns = b_advantages + b_vals
-                # b_returns = torch.tensor(returns[batch]).to(self.device)
-                # b_advantages = b_returns - b_vals
+                # convert to tensors for processing
+                states = torch.tensor(state_mem[batch], dtype=torch.float32).to(self.device)
+                old_probs = torch.tensor(probs_mem[batch], dtype=torch.float32).to(self.device)
+                actions = torch.tensor(action_mem[batch], dtype=torch.float32).to(self.device)
 
-                _, new_log_probs, entropy, new_vals = self.conv_net.get_act_and_value(b_states, b_actions.long())
+                # get actor and critic outputs
+                categorical_dist = self.actor(states)
+                critic_val = torch.squeeze(self.critic(states))
 
-                log_prob_ratio = new_log_probs - b_log_probs
-                prob_ratio = log_prob_ratio.exp()
+                # get probs from vategorical distribution
+                new_probs = categorical_dist.log_prob(actions)
 
-                with torch.no_grad():
-                    # using approx kl from http://joschu.net/blog/kl-approx.html to
-                    # 1. monitor policy i.e. spikes in kl div might show policy is worsening
-                    # 2. early end if approx kl gets bigger than target_kl
-                    old_approx_kl = (-log_prob_ratio).mean()
-                    approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
-                    clip_fracs += [((prob_ratio - 1.0).abs() > self.policy_clip).float().mean().item()]
-
-                # note sometimes advantage normalizaiton can lead to empirical benefits
-                # in training but it seems it can be harmful sometimes
-                if self.norm_advantage:
-                    b_advantages = (b_advantages - b_advantages.mean()) / (b_advantages.std() + 1e-8)
-
-                
                 # (p_theta / p_theta_old) * A_t
-                weighted_probs = -b_advantages * prob_ratio
+                prob_ratio = (new_probs - old_probs).exp()
+                weighted_probs = advantage[batch] * prob_ratio
+
                 # clip per paper to avoid too big a change in underlying params
-                weighted_clipped_probs = -b_advantages * torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip)
+                weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
 
-                # actor loss (recall loss performed using gradient ascent)
-                actor_loss = torch.max(weighted_probs, weighted_clipped_probs).mean()
+                # actor loss performed using gradient ascent
+                actor_loss = -1 * torch.min(weighted_probs, weighted_clipped_probs).mean()
 
+                # return = advantage + memory_critic_val
                 # critic loss = mse(return - network_critic_val)
-                critic_loss = (b_returns - torch.squeeze(new_vals)) ** 2
-                critic_loss = 0.5 * critic_loss.mean()
+                returns = advantage[batch] + vals[batch]
+                critic_loss = (returns - critic_val) ** 2
+                critic_loss = critic_loss.mean()
 
-                # entropy to encourage exploration
-                entropy_loss = entropy.mean()
+                # note total loss is + 0.5 since we need gradient ascent
+                # also, since we're using two separate networks for
+                # critic and loss, we don't need the entropy term
+                total_loss = actor_loss + 0.5 * critic_loss
 
-                # compute total loss
-                loss = (actor_loss) + (self.critic_coeff * critic_loss) - (self.entropy_coeff * entropy_loss)
+                # zero out grads
+                self.actor.optimizer.zero_grad()
+                self.critic.optimizer.zero_grad()
 
-                # backprop and descent
-                self.optimizer.zero_grad()
-                loss.backward()
-                if (self.max_grad_norm != None):
-                    nn.utils.clip_grad_norm_(self.conv_net.parameters(), self.max_grad_norm)
-                self.optimizer.step()
-                if self.scheduler_gamma != None:
-                    self.scheduler.step()
+                # backprop
+                total_loss.backward()
 
-            if self.early_stop_kl != None:
-                if approx_kl > self.early_stop_kl:
-                    break
+                # descent steps on each network
+                self.actor.optimizer.step()
+                self.critic.optimizer.step()
 
-        # explained variance measures how well the value func matches the returns
-        # should be as close to 1 as possible
-        y_pred, y_true = b_vals.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        # return early stop condition and log metrics
-        return {
-            'train/lr': self.optimizer.param_groups[0]['lr'],
-            'losses/old_approx_kl': old_approx_kl.item(),
-            'losses/approx_kl': approx_kl.item(),
-            'losses/clip_fracs': np.mean(clip_fracs),
-            'losses/critic_loss': critic_loss.item(),
-            'losses/actor_loss': actor_loss.item(),
-            'losses/entropy_loss': entropy_loss.item(),
-            'losses/explained_variance': explained_var,
+    # ------------------------------------------------------------------------------------------
+    # memory funcs 
+    # --------------------------------------------------------------------------------
+    def cache(self, state, action, probs, vals, reward, done):
+        self.memory.store_memory(state, action, probs, vals, reward, done)
+    def clear_mem(self):
+        self.memory.clear_memory()
+    def mem_full(self):
+        return len(self.memory) == self.buffer_size
+    # ------------------------------------------------------------------------------------------
+
+
+    # ------------------------------------------------------------------------------------------
+    # checkpoint funcs
+    # --------------------------------------------------------------------------------
+    def save_models(self, save_path='model_checkpoint.pt'):
+
+        save_dict = {
+            'actor': self.actor.state_dict(),
+            'actor_optimizer': self.actor.optimizer.state_dict(),
+            'critic': self.critic.state_dict(),
+            'critic_optimizer': self.critic.optimizer.state_dict(),
         }
+
+        if self.scheduler_gamma:
+            save_dict['actor_scheduler'] = self.actor.scheduler.state_dict()
+            save_dict['critic_scheduler'] = self.critic.scheduler.state_dict()
+
+        torch.save(save_dict, save_path)
+
+    def load_models(self, load_path='model_checkpoint.pt'):
+        checkpoint = torch.load(load_path, map_location=self.device)
+        
+        self.actor.load_state_dict(checkpoint['actor'])
+        self.critic.load_state_dict(checkpoint['critic'])
+
+        self.actor.optimizer.load_state_dict(checkpoint['actor_optimizer'])
+        self.critic.optimizer.load_state_dict(checkpoint['critic_optimizer'])
+
+        if self.scheduler_gamma:
+            self.actor.scheduler.load_state_dict(checkpoint['actor_scheduler'])
+            self.critic.scheduler.load_state_dict(checkpoint['critic_scheduler'])
+    # ------------------------------------------------------------------------------------------
