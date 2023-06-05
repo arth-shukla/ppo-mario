@@ -45,7 +45,7 @@ class PPOActor(nn.Module):
         return int(np.prod(o.size()))
 
     def forward(self, x):
-        num_batches = x[0]
+        num_batches = x.size(0)
 
         x = self.conv(x)
         x = x.view(num_batches, -1)
@@ -93,7 +93,7 @@ class PPOCritic(nn.Module):
         return int(np.prod(o.size()))
 
     def forward(self, x):
-        num_batches = x[0]
+        num_batches = x.size(0)
 
         x = self.conv(x)
         x = x.view(num_batches, -1)

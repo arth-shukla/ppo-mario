@@ -53,12 +53,12 @@ class PPOAgent():
 
         # create actor, critic, and memory
         self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma)
-        self.critic = PPOCritic(obs_shape, embed=embed, scheduler_gamma=scheduler_gamma)
-        self.memory = PPOExperience(batch_size, embed=embed, buffer_size=buffer_size)
+        self.critic = PPOCritic(obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma)
+        self.memory = PPOExperience(batch_size, buffer_size=buffer_size)
 
 
     def act(self, obs):
-        state = torch.tensor(np.array(obs), dtype=torch.float32).to(self.device)
+        state = torch.tensor(np.array(obs), dtype=torch.float32).unsqueeze(0).to(self.device)
 
         # get action from actor
         categorical_dist = self.actor(state)
@@ -68,13 +68,13 @@ class PPOAgent():
         val = self.critic(state)
 
         # get probability of action based on policy, action, and val
-        action = torch.squeeze(action).item()
         prob = torch.squeeze(categorical_dist.log_prob(action)).item()
+        action = torch.squeeze(action).item()
         val = torch.squeeze(val).item()
 
         return action, prob, val
     
-    def learn(self):
+    def learn(self, next_state):
         for _ in range(self.epochs):
             state_mem, action_mem, probs_mem, vals_mem, rewards_mem, dones_mem, batch_idxs = self.memory.gen_batches()
 
@@ -88,8 +88,14 @@ class PPOAgent():
                 # calc each A_k term
                 for k in range(t, len(rewards_mem)-1):
 
+                    next_val = vals_mem[k + 1]
+                    # if k == rewards_mem - 1:
+                    #     next_val = self.critic(next_state)
+                    # else:
+                    #     next_val = vals_mem[k + 1]
+
                     # delta_k = r_k + discount * V(s_k+1) - V(s_k)
-                    delta_k = rewards_mem[k] + self.discount * vals_mem[k + 1] * (1 - int(dones_mem[k])) - vals_mem[k]
+                    delta_k = rewards_mem[k] + self.discount * next_val * (1 - int(dones_mem[k])) - vals_mem[k]
                     
                     # add to A_t
                     A_t += discount * delta_k
@@ -167,7 +173,7 @@ class PPOAgent():
     # ------------------------------------------------------------------------------------------
     # checkpoint funcs
     # --------------------------------------------------------------------------------
-    def save_models(self, save_path='model_checkpoint.pt'):
+    def save(self, save_path='model_checkpoint.pt'):
 
         save_dict = {
             'actor': self.actor.state_dict(),
@@ -182,7 +188,7 @@ class PPOAgent():
 
         torch.save(save_dict, save_path)
 
-    def load_models(self, load_path='model_checkpoint.pt'):
+    def load(self, load_path='model_checkpoint.pt'):
         checkpoint = torch.load(load_path, map_location=self.device)
         
         self.actor.load_state_dict(checkpoint['actor'])
