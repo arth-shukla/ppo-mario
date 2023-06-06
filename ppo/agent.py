@@ -111,6 +111,12 @@ class PPOAgent():
             vals = torch.tensor(vals_mem).to(self.device)
 
 
+            # note sometimes advantage normalizaiton can lead to empirical benefits
+            # in training but it seems it can be harmful sometimes
+            if self.norm_advantage:
+                advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+
+
             for batch in batch_idxs:
 
                 # convert to tensors for processing
@@ -126,8 +132,17 @@ class PPOAgent():
                 new_probs = categorical_dist.log_prob(actions)
 
                 # (p_theta / p_theta_old) * A_t
-                prob_ratio = (new_probs - old_probs).exp()
+                log_prob_ratio = new_probs - old_probs
+                prob_ratio = log_prob_ratio.exp()
                 weighted_probs = advantage[batch] * prob_ratio
+
+
+                # using approx kl from http://joschu.net/blog/kl-approx.html to
+                # 1. monitor policy i.e. spikes in kl div might show policy is worsening
+                # 2. early end if approx kl gets bigger than target_kl
+                with torch.no_grad():
+                    approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
+
 
                 # clip per paper to avoid too big a change in underlying params
                 weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
@@ -146,6 +161,15 @@ class PPOAgent():
                 # critic and loss, we don't need the entropy term
                 total_loss = actor_loss + self.critic_coeff * critic_loss
 
+
+                # entropy can help force the model to explore more, which can help prevent the 
+                # agent from converging to an unhelpful solution by encouraging exploration
+                entropy = categorical_dist.entropy()
+                entropy_loss = entropy.mean()
+                if self.entropy_coeff != None:
+                    total_loss -= self.entropy_coeff * entropy_loss
+
+
                 # zero out grads
                 self.actor.optimizer.zero_grad()
                 self.critic.optimizer.zero_grad()
@@ -153,9 +177,35 @@ class PPOAgent():
                 # backprop
                 total_loss.backward()
 
+
+                # grad norm clip can help reduce model perturbations and avoid
+                # harmful shifts in the policy space, but if too aggressive can
+                # also harm learning or require smaller learning rates
+                if self.max_grad_norm != None:
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+
+                    
                 # descent steps on each network
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
+
+
+                if self.scheduler_gamma != None:
+                    self.actor.scheduler.step()
+                    self.critic.scheduler.step()
+    
+        log_dict = {
+            'losses/actor_loss': actor_loss.item(),
+            'losses/critic_loss': critic_loss.item(),
+            'losses/approx_kl': approx_kl.item(),
+            'losses/entropy': entropy_loss.item(),
+        }
+        if self.scheduler_gamma:
+            log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_last_lr()[0]
+            log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_last_lr()[0]
+
+        return log_dict
 
 
     # ------------------------------------------------------------------------------------------
