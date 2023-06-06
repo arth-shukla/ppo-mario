@@ -17,7 +17,7 @@ class PPOAgent():
             # loss calc
             entropy_coeff=0.01, critic_coeff=0.5, max_grad_norm=0.5, early_stop_kl=None,
             # optimizer params
-            lr=2.5e-4, scheduler_gamma=None,
+            lr=2.5e-4, sch_end_f=None,
 
         ):
         
@@ -46,14 +46,14 @@ class PPOAgent():
 
         # optimizer params
         self.lr = lr
-        self.scheduler_gamma = scheduler_gamma
+        self.sch_end_f = sch_end_f
 
         # get device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # create actor, critic, and memory
-        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma).to(self.device)
-        self.critic = PPOCritic(obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma).to(self.device)
+        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, sch_end_f=sch_end_f).to(self.device)
+        self.critic = PPOCritic(obs_shape, lr, embed=embed, sch_end_f=sch_end_f).to(self.device)
         self.memory = PPOExperience(batch_size, buffer_size=buffer_size)
 
 
@@ -189,7 +189,7 @@ class PPOAgent():
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
             
-            if self.scheduler_gamma != None:
+            if self.sch_end_f != None:
                 self.actor.scheduler.step()
                 self.critic.scheduler.step()
 
@@ -199,8 +199,7 @@ class PPOAgent():
             'losses/approx_kl': approx_kl.item(),
             'losses/entropy': entropy_loss.item(),
         }
-        if self.scheduler_gamma:
-            print(self.actor.scheduler.get_last_lr())
+        if self.sch_end_f:
             log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_last_lr()[0]
             log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_last_lr()[0]
 
@@ -231,7 +230,7 @@ class PPOAgent():
             'critic_optimizer': self.critic.optimizer.state_dict(),
         }
 
-        if self.scheduler_gamma:
+        if self.sch_end_f:
             save_dict['actor_scheduler'] = self.actor.scheduler.state_dict()
             save_dict['critic_scheduler'] = self.critic.scheduler.state_dict()
 
@@ -246,7 +245,7 @@ class PPOAgent():
         self.actor.optimizer.load_state_dict(checkpoint['actor_optimizer'])
         self.critic.optimizer.load_state_dict(checkpoint['critic_optimizer'])
 
-        if self.scheduler_gamma:
+        if self.sch_end_f:
             self.actor.scheduler.load_state_dict(checkpoint['actor_scheduler'])
             self.critic.scheduler.load_state_dict(checkpoint['critic_scheduler'])
     # ------------------------------------------------------------------------------------------
