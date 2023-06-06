@@ -144,7 +144,7 @@ class PPOAgent():
                 # note total loss is + 0.5 since we need gradient ascent
                 # also, since we're using two separate networks for
                 # critic and loss, we don't need the entropy term
-                total_loss = actor_loss + 0.5 * critic_loss
+                total_loss = actor_loss + self.critic_coeff * critic_loss
 
                 # zero out grads
                 self.actor.optimizer.zero_grad()
