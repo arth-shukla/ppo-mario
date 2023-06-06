@@ -136,9 +136,6 @@ class PPOAgent():
                 # 2. early end if approx kl gets bigger than target_kl
                 # with torch.no_grad():
                 approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
-                if self.early_stop_kl != None:
-                    if approx_kl > 1.5 * self.early_stop_kl:
-                        break
 
 
                 # clip per paper to avoid too big a change in underlying params
@@ -181,6 +178,10 @@ class PPOAgent():
             if self.scheduler_gamma != None:
                 self.actor.scheduler.step()
                 self.critic.scheduler.step()
+            
+            if self.early_stop_kl != None:
+                if approx_kl > 1.5 * self.early_stop_kl:
+                    break
     
         log_dict = {
             'losses/actor_loss': actor_loss.item(),
