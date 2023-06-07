@@ -17,7 +17,7 @@ class PPOAgent():
             # loss calc
             entropy_coeff=0.01, critic_coeff=0.5, max_grad_norm=0.5, early_stop_kl=None,
             # optimizer params
-            lr=2.5e-4, sch_end_f=None,
+            lr=2.5e-4, scheduler_gamma=None,
 
         ):
         
@@ -46,14 +46,14 @@ class PPOAgent():
 
         # optimizer params
         self.lr = lr
-        self.sch_end_f = sch_end_f
+        self.scheduler_gamma = scheduler_gamma
 
         # get device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
         # create actor, critic, and memory
-        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, sch_end_f=sch_end_f).to(self.device)
-        self.critic = PPOCritic(obs_shape, lr, embed=embed, sch_end_f=sch_end_f).to(self.device)
+        self.actor = PPOActor(act_n, obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma).to(self.device)
+        self.critic = PPOCritic(obs_shape, lr, embed=embed, scheduler_gamma=scheduler_gamma).to(self.device)
         self.memory = PPOExperience(batch_size, buffer_size=buffer_size)
 
 
@@ -74,28 +74,25 @@ class PPOAgent():
 
         return action, prob, val
     
-    approx_kl = None
-    entropy_loss = None
     def learn(self, next_state):
-        next_state = torch.tensor(next_state).unsqueeze(0).to(self.device)
-        next_state_val = self.critic(next_state)
         for _ in range(self.epochs):
             state_mem, action_mem, probs_mem, vals_mem, rewards_mem, dones_mem, batch_idxs = self.memory.gen_batches()
 
             advantage = np.zeros(len(rewards_mem), dtype=np.float32)
             # calc A_t
-            for t in range(len(rewards_mem)):
+            for t in range(len(rewards_mem)-1):
 
                 discount = 1    # (discount * delta) ^ 0
                 A_t = 0
 
                 # calc each A_k term
-                for k in range(t, len(rewards_mem)):
+                for k in range(t, len(rewards_mem)-1):
 
-                    if k == len(rewards_mem) - 1:
-                        next_val = next_state_val
-                    else:
-                        next_val = vals_mem[k + 1]
+                    next_val = vals_mem[k + 1]
+                    # if k == rewards_mem - 1:
+                    #     next_val = self.critic(next_state)
+                    # else:
+                    #     next_val = vals_mem[k + 1]
 
                     # delta_k = r_k + discount * V(s_k+1) - V(s_k)
                     delta_k = rewards_mem[k] + self.discount * next_val * (1 - int(dones_mem[k])) - vals_mem[k]
@@ -113,10 +110,6 @@ class PPOAgent():
             advantage = torch.tensor(advantage).to(self.device)
             vals = torch.tensor(vals_mem).to(self.device)
 
-            # note sometimes advantage normalizaiton can lead to empirical benefits
-            # in training but it seems it can be harmful sometimes
-            if self.norm_advantage:
-                advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
 
             for batch in batch_idxs:
 
@@ -129,7 +122,7 @@ class PPOAgent():
                 categorical_dist = self.actor(states)
                 critic_val = torch.squeeze(self.critic(states))
 
-                # get probs from categorical distribution
+                # get probs from vategorical distribution
                 new_probs = categorical_dist.log_prob(actions)
 
                 # (p_theta / p_theta_old) * A_t
@@ -143,7 +136,7 @@ class PPOAgent():
                 # 2. early end if approx kl gets bigger than target_kl
                 with torch.no_grad():
                     approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
-
+                    
 
                 # clip per paper to avoid too big a change in underlying params
                 weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
@@ -169,7 +162,7 @@ class PPOAgent():
                 entropy_loss = entropy.mean()
                 if self.entropy_coeff != None:
                     total_loss -= self.entropy_coeff * entropy_loss
-
+                
 
                 # zero out grads
                 self.actor.optimizer.zero_grad()
@@ -178,20 +171,17 @@ class PPOAgent():
                 # backprop
                 total_loss.backward()
 
-                # grad norm clip can help reduce model perturbations and avoid
-                # harmful shifts in the policy space, but if too aggressive can
-                # also harm learning or require smaller learning rates
-                if self.max_grad_norm != None:
-                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-
                 # descent steps on each network
                 self.actor.optimizer.step()
                 self.critic.optimizer.step()
-            
-            if self.sch_end_f != None:
+
+            if self.scheduler_gamma != None:
                 self.actor.scheduler.step()
                 self.critic.scheduler.step()
+
+            if self.early_stop_kl != None:
+                if approx_kl > 1.5 * self.early_stop_kl:
+                    break
 
         log_dict = {
             'losses/actor_loss': actor_loss.item(),
@@ -199,12 +189,11 @@ class PPOAgent():
             'losses/approx_kl': approx_kl.item(),
             'losses/entropy': entropy_loss.item(),
         }
-        if self.sch_end_f:
+        if self.scheduler_gamma != None:
             log_dict['charts/actor_learning_rate'] = self.actor.scheduler.get_last_lr()[0]
             log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_last_lr()[0]
 
         return log_dict
-
 
     # ------------------------------------------------------------------------------------------
     # memory funcs 
@@ -230,7 +219,7 @@ class PPOAgent():
             'critic_optimizer': self.critic.optimizer.state_dict(),
         }
 
-        if self.sch_end_f:
+        if self.scheduler_gamma:
             save_dict['actor_scheduler'] = self.actor.scheduler.state_dict()
             save_dict['critic_scheduler'] = self.critic.scheduler.state_dict()
 
@@ -245,7 +234,7 @@ class PPOAgent():
         self.actor.optimizer.load_state_dict(checkpoint['actor_optimizer'])
         self.critic.optimizer.load_state_dict(checkpoint['critic_optimizer'])
 
-        if self.sch_end_f:
+        if self.scheduler_gamma:
             self.actor.scheduler.load_state_dict(checkpoint['actor_scheduler'])
             self.critic.scheduler.load_state_dict(checkpoint['critic_scheduler'])
     # ------------------------------------------------------------------------------------------
