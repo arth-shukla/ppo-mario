@@ -134,9 +134,9 @@ class PPOAgent():
                 # using approx kl from http://joschu.net/blog/kl-approx.html to
                 # 1. monitor policy i.e. spikes in kl div might show policy is worsening
                 # 2. early end if approx kl gets bigger than target_kl
-                # with torch.no_grad():
-                approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
-
+                with torch.no_grad():
+                    approx_kl = ((prob_ratio - 1) - log_prob_ratio).mean()
+                    
 
                 # clip per paper to avoid too big a change in underlying params
                 weighted_clipped_probs = torch.clamp(prob_ratio, 1 - self.policy_clip, 1 + self.policy_clip) * advantage[batch]
@@ -162,7 +162,7 @@ class PPOAgent():
                 entropy_loss = entropy.mean()
                 if self.entropy_coeff != None:
                     total_loss -= self.entropy_coeff * entropy_loss
-
+                
 
                 # zero out grads
                 self.actor.optimizer.zero_grad()
@@ -178,11 +178,11 @@ class PPOAgent():
             if self.scheduler_gamma != None:
                 self.actor.scheduler.step()
                 self.critic.scheduler.step()
-            
+
             if self.early_stop_kl != None:
                 if approx_kl > 1.5 * self.early_stop_kl:
                     break
-    
+
         log_dict = {
             'losses/actor_loss': actor_loss.item(),
             'losses/critic_loss': critic_loss.item(),
@@ -194,7 +194,6 @@ class PPOAgent():
             log_dict['charts/critic_learning_rate'] = self.critic.scheduler.get_last_lr()[0]
 
         return log_dict
-
 
     # ------------------------------------------------------------------------------------------
     # memory funcs 
