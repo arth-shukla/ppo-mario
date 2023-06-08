@@ -41,20 +41,22 @@ Each run was capped at 2000 episodes, which is 6.5x fewer iterations than my [DD
 
 Note that the PPO does still sometimes fail, but in general it performs well. Here are some successful trials using the pretrained checkpoints available in this repo:
 
-<table style='table-layout: fixed; width: 100%;'>
-    <thead>
-        <th>Standard PPO</h3></figcaption>
-        <th>PPO Advantage Normalization</h3></figcaption>
-        <th>PPO Early Stop (Approx KL Div)</h3></figcaption>
-    </thead>
-    <body>
-        <tr>
-            <td><a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/std_run_best_model.gif' width='100%'/></a></td>
-            <td><a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/adv_norm_best_model.gif' width='100%'/></a></td>
-            <td><a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/early_stop_kl_best_model.gif' width='100%'/></a></td>
-        </tr>
-    </body>
-</table>
+<figure style='float:left;box-sizing:border-box;width:33%;min-width:100px;margin:0;padding:10px;'>
+  <figcaption><h3>Standard PPO</h3></figcaption>
+  <a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/std_run_best_model.gif' width='100%'/></a>
+</figure>
+
+<figure style='float:left;width:33%;min-width:100px;box-sizing:border-box;margin:0;margin:0;padding:10px;'>
+  <figcaption><h3>PPO Advantage Normalization</h3></figcaption>
+  <a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/adv_norm_best_model.gif' width='100%'/></a>
+</figure>
+
+<figure style='float:left;width:33%;min-width:100px;box-sizing:border-box;margin:0;margin:0;padding:10px;'>
+  <figcaption><h3>PPO Early Stop (Approx KL Div)</h3></figcaption>
+  <a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/early_stop_kl_best_model.gif' width='100%'/></a>
+</figure>
+
+<div aria-hidden='true' style='clear:both'></div>
 
 ## Future Experiments
 
