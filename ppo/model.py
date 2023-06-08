@@ -6,7 +6,7 @@ import numpy as np
 
 
 class PPOActor(nn.Module):
-    def __init__(self, act_n, obs_shape, lr, embed=512, sch_end_f=None):
+    def __init__(self, act_n, obs_shape, lr, embed=512, scheduler_gamma=None):
         super(PPOActor, self).__init__()
 
         # get device and send to it
@@ -36,8 +36,8 @@ class PPOActor(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
         # optionally make scheduler
-        if sch_end_f != None:
-            self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1.0, end_factor=sch_end_f, total_iters=8000)
+        if scheduler_gamma != None:
+            self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1.0, end_factor=scheduler_gamma, total_iters=8000)
 
     def _get_conv_out(self, obs_shape):
         o = self.conv(torch.zeros(1, *obs_shape))
@@ -54,7 +54,7 @@ class PPOActor(nn.Module):
         return x
 
 class PPOCritic(nn.Module):
-    def __init__(self, obs_shape, lr, embed=512, sch_end_f=None):
+    def __init__(self, obs_shape, lr, embed=512, scheduler_gamma=None):
         super(PPOCritic, self).__init__()
 
         # get device and send to it
@@ -83,8 +83,8 @@ class PPOCritic(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=lr)
 
         # optionally make scheduler
-        if sch_end_f != None:
-            self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1.0, end_factor=sch_end_f, total_iters=8000)
+        if scheduler_gamma != None:
+            self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1.0, end_factor=scheduler_gamma, total_iters=8000)
 
     def _get_conv_out(self, obs_shape):
         o = self.conv(torch.zeros(1, *obs_shape))
