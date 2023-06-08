@@ -36,12 +36,12 @@ Each run was capped at 2000 episodes, which is 6.5x fewer iterations than my [DD
 
 <table cellspacing="0" cellpadding="0">
   <tr>
-    <td><img src='./assets/std_run.png' /></td>
-    <td><img src='./assets/adv_norm.png' /></td>
+    <td><img src='./assets/1-1_std_run.png' /></td>
+    <td><img src='./assets/1-1_adv_norm.png' /></td>
   </tr>
   <tr>
-    <td><img src='./assets/early_stop.png' /></td>
-    <td><img src='./assets/all_tests.png' /></td>
+    <td><img src='./assets/1-1_early_stop.png' /></td>
+    <td><img src='./assets/1-1_all_tests.png' /></td>
   </tr>
 </table>
 
