@@ -34,29 +34,33 @@ The most successful were the following three:
 
 Each run was capped at 2000 episodes, which is 6.5x fewer iterations than my [DDQN required](https://github.com/arth-shukla/ddqn-mario) to acheive similar results!
 
-<img src='./assets/std_run.png' width='48%' style='float:left;padding:1%' />
-<img src='./assets/adv_norm.png' width='48%' style='float:left;padding:1%' />
-<img src='./assets/early_stop.png' width='48%' style='float:left;padding:1%' />
-<img src='./assets/all_tests.png' width='48%' style='float:left;padding:1%' />
+<table cellspacing="0" cellpadding="0">
+  <tr>
+    <td><img src='./assets/std_run.png' /></td>
+    <td><img src='./assets/adv_norm.png' /></td>
+  </tr>
+  <tr>
+    <td><img src='./assets/early_stop.png' /></td>
+    <td><img src='./assets/all_tests.png' /></td>
+  </tr>
+</table>
 
 Note that the PPO does still sometimes fail, but in general it performs well. Here are some successful trials using the pretrained checkpoints available in this repo:
 
-<figure style='float:left;box-sizing:border-box;width:33%;min-width:100px;margin:0;padding:10px;'>
-  <figcaption><h3>Standard PPO</h3></figcaption>
-  <a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/std_run_best_model.gif' width='100%'/></a>
-</figure>
-
-<figure style='float:left;width:33%;min-width:100px;box-sizing:border-box;margin:0;margin:0;padding:10px;'>
-  <figcaption><h3>PPO Advantage Normalization</h3></figcaption>
-  <a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/adv_norm_best_model.gif' width='100%'/></a>
-</figure>
-
-<figure style='float:left;width:33%;min-width:100px;box-sizing:border-box;margin:0;margin:0;padding:10px;'>
-  <figcaption><h3>PPO Early Stop (Approx KL Div)</h3></figcaption>
-  <a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/early_stop_kl_best_model.gif' width='100%'/></a>
-</figure>
-
-<div aria-hidden='true' style='clear:both'></div>
+<table>
+  <thead>
+    <th>Standard PPO</th>
+    <th>PPO Advantage Normalization</th>
+    <th>PPO Early Stop (Approx KL Div)</th>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/std_run_best_model.gif' width='300px'/></a></td>
+      <td><a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/adv_norm_best_model.gif' width='300px'/></a></td>
+      <td><a href='https://wandb.ai/arth-shukla/Mario-PPO'><img src='./assets/early_stop_kl_best_model.gif' width='300px'/></a></td>
+    </tr>
+  </tbody>
+</table>
 
 ## Future Experiments
 
